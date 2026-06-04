@@ -2,7 +2,9 @@ use std::hint::black_box;
 use std::io::{Cursor, Read, Write};
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main, measurement::WallTime};
+use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
+use futures::StreamExt;
 use futures::executor::block_on;
 use futures::io::AllowStdIo;
 use tokio_util::compat::{FuturesAsyncReadCompatExt, FuturesAsyncWriteCompatExt};
@@ -131,6 +133,106 @@ fn fs_read_many_files(c: &mut Criterion<WallTime>) {
     });
 }
 
+/// Read the many-files sdist archive fully into memory, so the compression
+/// benchmarks below can exercise the codec without touching the file system.
+fn read_many_files_sdist_bytes() -> Vec<u8> {
+    let archive = create_many_files_sdist();
+    std::fs::read(archive.path()).expect("Failed to read temporary archive")
+}
+
+/// Gzip-decompress the sdist archive entirely in memory, discarding the output.
+///
+/// Isolates the pure decompression CPU cost of `unpack_sdist_many_files` (same
+/// `zlib-rs` codec) with no file-system reads, writes, or tar parsing, to see
+/// how much of that benchmark's run-to-run range comes from decompression.
+fn gz_decompress_archive(c: &mut Criterion<WallTime>) {
+    let compressed = read_many_files_sdist_bytes();
+
+    c.bench_function("gz_decompress_archive", |b| {
+        b.iter_batched(
+            || vec![0u8; 64 * 1024],
+            |mut buffer| {
+                let mut decoder = GzDecoder::new(Cursor::new(black_box(&compressed)));
+                let mut total = 0usize;
+                loop {
+                    let read = decoder.read(&mut buffer).expect("Failed to decompress");
+                    if read == 0 {
+                        break;
+                    }
+                    total += read;
+                }
+                black_box(total)
+            },
+            BatchSize::SmallInput,
+        );
+    });
+}
+
+/// Gzip-compress the decompressed archive contents entirely in memory.
+///
+/// The inverse of `gz_decompress_archive`: isolates compression CPU cost with no
+/// file-system I/O, as a cross-check on whether the compression codec (rather
+/// than the file system) is the source of run-to-run range.
+fn gz_compress_archive(c: &mut Criterion<WallTime>) {
+    let compressed = read_many_files_sdist_bytes();
+    let mut decompressed = Vec::new();
+    GzDecoder::new(Cursor::new(&compressed))
+        .read_to_end(&mut decompressed)
+        .expect("Failed to decompress");
+
+    c.bench_function("gz_compress_archive", |b| {
+        b.iter(|| {
+            let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::default());
+            encoder
+                .write_all(black_box(&decompressed))
+                .expect("Failed to compress");
+            black_box(encoder.finish().expect("Failed to finish gzip"))
+        });
+    });
+}
+
+/// Decompress and tar-parse the sdist archive without writing any files to disk.
+///
+/// Decompresses with the same `zlib-rs` codec, then drains every tar entry
+/// (reading its body) but never unpacks to the file system. The gap between
+/// this and `unpack_sdist_many_files` isolates the file-system metadata-write
+/// cost (~10,002 inode creations) from the decompression + tar-parsing CPU cost.
+fn untar_archive_to_memory(c: &mut Criterion<WallTime>) {
+    let compressed = read_many_files_sdist_bytes();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to create Tokio runtime");
+
+    c.bench_function("untar_archive_to_memory", |b| {
+        b.iter(|| {
+            // Decompress with the same `zlib-rs` codec, into memory.
+            let mut decompressed = Vec::new();
+            GzDecoder::new(Cursor::new(black_box(&compressed)))
+                .read_to_end(&mut decompressed)
+                .expect("Failed to decompress");
+
+            runtime.block_on(async {
+                let reader = AllowStdIo::new(Cursor::new(&decompressed)).compat();
+                let mut archive = tokio_tar::Archive::new(reader);
+                let mut entries = archive.entries().expect("Failed to read entries");
+                let mut pinned = std::pin::Pin::new(&mut entries);
+                let mut count = 0usize;
+                let mut sink = Vec::new();
+                while let Some(entry) = pinned.next().await {
+                    let mut entry = entry.expect("Failed to read entry");
+                    sink.clear();
+                    tokio::io::AsyncReadExt::read_to_end(&mut entry, &mut sink)
+                        .await
+                        .expect("Failed to drain entry");
+                    count += 1;
+                }
+                black_box(count)
+            })
+        });
+    });
+}
+
 fn write_tar_entry<W: tokio::io::AsyncWrite + Unpin + Send>(
     writer: &mut tokio_tar::Builder<W>,
     path: &str,
@@ -153,6 +255,9 @@ criterion_group!(
     uv,
     unpack_sdist_many_files,
     fs_write_many_files,
-    fs_read_many_files
+    fs_read_many_files,
+    gz_decompress_archive,
+    gz_compress_archive,
+    untar_archive_to_memory
 );
 criterion_main!(uv);
