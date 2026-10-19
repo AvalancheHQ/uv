@@ -1,4 +1,17 @@
+run-name: "walltime (amd_pstate=${{ inputs.pstate || 'active' }})"
+
 on:
+  workflow_dispatch:
+    inputs:
+      pstate:
+        description: "amd_pstate mode on the benchmark runner"
+        type: choice
+        options: [active, passive]
+        default: active
+      build-run-id:
+        description: "Reuse the benchmark build of this run id (empty: build)"
+        type: string
+        default: ""
   workflow_call:
     inputs:
       save-rust-cache:
@@ -19,10 +32,9 @@ env:
 jobs:
   benchmarks-walltime-build:
     name: "walltime build"
-    runs-on: depot-ubuntu-24.04-16
-    # uv-dev benchmarks pull requests but imports its main-branch measurements from uv.
-    if: ${{ github.repository == 'astral-sh/uv' || (github.repository == 'astral-sh/uv-dev' && github.ref != 'refs/heads/main') }}
-    timeout-minutes: 30
+    if: ${{ inputs.build-run-id == '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - name: "Checkout Branch"
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -71,14 +83,16 @@ jobs:
           name: benchmarks-walltime
           path: benchmarks-walltime.tar.zst
           compression-level: 0
-          retention-days: 1
+          retention-days: 7
 
   benchmarks-walltime-run:
     name: "walltime on x86_64 linux"
     runs-on: codspeed-macro-x64-ryzen-9950x-ubuntu-24-04
     needs: benchmarks-walltime-build
+    if: ${{ !cancelled() && needs.benchmarks-walltime-build.result != 'failure' }}
     timeout-minutes: 30
     permissions:
+      actions: read # to download the build of another run
       contents: read
       id-token: write # for codspeed authentication
     steps:
@@ -98,6 +112,8 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: benchmarks-walltime
+          run-id: ${{ inputs.build-run-id || github.run_id }}
+          github-token: ${{ github.token }}
 
       - name: "Extract artifact archive"
         shell: bash
@@ -108,6 +124,34 @@ jobs:
 
       - name: "Create venv"
         run: ./target/debug/uv venv --cache-dir .cache
+
+      - name: "Switch amd_pstate to passive"
+        if: ${{ inputs.pstate == 'passive' }}
+        run: |
+          echo passive | sudo tee /sys/devices/system/cpu/amd_pstate/status
+          # switching resets boost to 1 and the governor to schedutil
+          echo 0 | sudo tee /sys/devices/system/cpu/cpufreq/boost
+          for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+            echo performance | sudo tee "$g" >/dev/null
+          done
+
+      - name: "Check CPU frequency settings"
+        env:
+          EXPECTED: ${{ inputs.pstate || 'active' }}
+        run: |
+          cpu=/sys/devices/system/cpu
+          status=$(cat $cpu/amd_pstate/status)
+          boost=$(cat $cpu/cpufreq/boost)
+          {
+            echo "| host | amd_pstate | driver | boost | governor | max freq |"
+            echo "| -- | -- | -- | -- | -- | -- |"
+            echo "| $(hostname) | $status | $(cat $cpu/cpu8/cpufreq/scaling_driver) | $boost" \
+              "| $(cat $cpu/cpu8/cpufreq/scaling_governor) | $(cat $cpu/cpu8/cpufreq/scaling_max_freq) |"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$status" != "$EXPECTED" ] || [ "$boost" != 0 ]; then
+            echo "::error::amd_pstate=$status boost=$boost, expected amd_pstate=$EXPECTED boost=0"
+            exit 1
+          fi
 
       - name: "Retain benchmark profiles"
         id: profiles
