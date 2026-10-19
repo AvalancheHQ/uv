@@ -1,6 +1,9 @@
 name: boot check
 
 on:
+  # workflow_dispatch only works once the file is on the default branch
+  push:
+    branches: [cod-3914-boot-check]
   workflow_dispatch:
     inputs:
       jobs:
@@ -19,7 +22,7 @@ jobs:
     steps:
       - id: indices
         env:
-          JOBS: ${{ inputs.jobs }}
+          JOBS: ${{ inputs.jobs || 30 }}
         run: echo "indices=$(seq -s, 1 "$JOBS" | sed 's/.*/[&]/')" >> "$GITHUB_OUTPUT"
 
   check:
