@@ -1,0 +1,42 @@
+name: boot check
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: "Number of no-op jobs to spread across the macro runners"
+        type: number
+        default: 30
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      indices: ${{ steps.indices.outputs.indices }}
+    steps:
+      - id: indices
+        env:
+          JOBS: ${{ inputs.jobs }}
+        run: echo "indices=$(seq -s, 1 "$JOBS" | sed 's/.*/[&]/')" >> "$GITHUB_OUTPUT"
+
+  check:
+    name: "boot check ${{ matrix.index }}"
+    needs: plan
+    runs-on: codspeed-macro-x64-ryzen-9950x-ubuntu-24-04
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        index: ${{ fromJSON(needs.plan.outputs.indices) }}
+    steps:
+      - name: "Record amd_pstate state"
+        run: |
+          cpu=/sys/devices/system/cpu
+          echo "| host | booted with | amd_pstate | driver | boost |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| -- | -- | -- | -- | -- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| $(hostname) | $(grep -o 'amd_pstate=[a-z]*' /proc/cmdline || echo none)" \
+            "| $(cat $cpu/amd_pstate/status) | $(cat $cpu/cpu8/cpufreq/scaling_driver) | $(cat $cpu/cpufreq/boost) |" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
