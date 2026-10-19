@@ -1,0 +1,56 @@
+name: pstate smoke
+
+on:
+  push:
+    branches: [cod-3914-pstate-smoke]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: codspeed-macro-staging-x64-ryzen-9950x-ubuntu-24-04
+    timeout-minutes: 15
+    steps:
+      - name: "Write probe"
+        run: |
+          cat > "$RUNNER_TEMP/probe.sh" <<'EOF'
+          cpu=/sys/devices/system/cpu
+          echo "host=$(hostname) kernel=$(uname -r) user=$(id -un)"
+          for f in amd_pstate/status cpufreq/boost cpu8/cpufreq/scaling_driver \
+            cpu8/cpufreq/scaling_governor cpu8/cpufreq/scaling_max_freq; do
+            echo "$f=$(cat $cpu/$f 2>&1)"
+          done
+          echo "cgroup=$(cat /proc/self/cgroup) $(taskset -pc $$)"
+          # Clock under a single-threaded sha256 load, on the bench cores when reachable.
+          for c in 8 0; do
+            taskset -c $c true 2>/dev/null || { echo "cpu$c: not allowed"; continue; }
+            out=$(perf stat -x, -e cycles,task-clock -- \
+              taskset -c $c openssl speed -seconds 3 -bytes 16384 sha256 2>&1)
+            cyc=$(echo "$out" | awk -F, '$3=="cycles"{print $1}')
+            ns=$(echo "$out" | awk -F, '$3=="task-clock"{print $1}')
+            ghz=$(awk -v c="$cyc" -v n="$ns" 'BEGIN{if (c+0 > 0 && n+0 > 0) printf "%.3f", c/n; else print "n/a"}')
+            echo "cpu$c: ghz=$ghz sha256=$(echo "$out" | awk '/^sha256 /{print $NF}' | tail -1)"
+          done
+          EOF
+
+      - name: "Before"
+        run: bash "$RUNNER_TEMP/probe.sh"
+
+      - name: "Switch amd_pstate to passive"
+        run: |
+          echo passive | sudo tee /sys/devices/system/cpu/amd_pstate/status
+          # switching resets boost to 1 and the governor to schedutil
+          echo 0 | sudo tee /sys/devices/system/cpu/cpufreq/boost
+          for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+            echo performance | sudo tee "$g" >/dev/null
+          done
+
+      - name: "After"
+        run: bash "$RUNNER_TEMP/probe.sh"
+
+      - name: "After, from the bench cgroup"
+        run: |
+          echo $$ | sudo tee /sys/fs/cgroup/codspeed/all/cgroup.procs && bash "$RUNNER_TEMP/probe.sh" \
+            || echo "could not join codspeed/all"
