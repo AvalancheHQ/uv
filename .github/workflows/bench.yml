@@ -121,6 +121,7 @@ jobs:
             echo "| $(hostname) | $(cat $cpu/amd_pstate/status) | $(cat $cpu/cpu8/cpufreq/scaling_driver) | $(cat $cpu/cpufreq/boost)" \
               "| $(cat $cpu/cpu8/cpufreq/scaling_governor) | $(cat $cpu/cpu8/cpufreq/scaling_max_freq) |"
           } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "cmdline: $(cat /proc/cmdline)" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: "Record filesystems"
         run: |
@@ -141,6 +142,14 @@ jobs:
         uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
         with:
           run: uv run --only-dev cargo codspeed run --bench uv unzip_wheel_many_files
+          mode: walltime
+          upload-url: ${{ steps.profiles.outputs.upload-url }}
+
+      # The same benchmark code under other names, in a second process on the same boot.
+      - name: "Run benchmarks again"
+        uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
+        with:
+          run: uv run --only-dev cargo codspeed run --bench uv unzip_again_wheel_many_files
           mode: walltime
           upload-url: ${{ steps.profiles.outputs.upload-url }}
 
