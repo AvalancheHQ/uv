@@ -153,6 +153,17 @@ jobs:
           mode: walltime
           upload-url: ${{ steps.profiles.outputs.upload-url }}
 
+      - name: "Upload round samples"
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: criterion-samples
+          path: |
+            crates/uv-bench/target/criterion/*/new/sample.json
+            target/criterion/*/new/sample.json
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: "Finish profile capture"
         if: ${{ always() && steps.profiles.outcome == 'success' }}
         run: ./target/debug/uv run --script scripts/codspeed-profiles.py finish "$RUNNER_TEMP/codspeed-walltime"

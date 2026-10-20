@@ -287,6 +287,11 @@ fn unzip_wheel_many_files(c: &mut Criterion<WallTime>) {
     unzip_many_files(c, "unzip_wheel_many_files", 1, &env::temp_dir());
 }
 
+/// `unzip_wheel_many_files` again, right after it in the same process.
+fn unzip_wheel_many_files_twice(c: &mut Criterion<WallTime>) {
+    unzip_many_files(c, "unzip_wheel_many_files_twice", 1, &env::temp_dir());
+}
+
 /// `unzip_wheel_many_files` with the files split in two halves over two directories: the same
 /// rayon pool spreads its threads over the two directories instead of one.
 fn unzip_wheel_many_files_two_dirs(c: &mut Criterion<WallTime>) {
@@ -513,11 +518,8 @@ criterion_group! {
         hash_reader,
         unpack_sdist_many_files,
         unzip_wheel_many_files,
-        unzip_wheel_many_files_two_dirs,
-        unzip_wheel_many_files_disk,
+        unzip_wheel_many_files_twice,
         unzip_again_wheel_many_files,
-        unzip_again_wheel_many_files_two_dirs,
-        unzip_again_wheel_many_files_disk,
         prepare_wheel_many_files,
         install_wheel_many_files
 }
