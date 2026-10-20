@@ -163,11 +163,22 @@ fn hash_reader_stream(bytes: &[u8], chunk_size: usize) -> impl AsyncRead + Unpin
 }
 
 fn create_many_files_wheel() -> tempfile::NamedTempFile {
-    let archive = tempfile::NamedTempFile::new().expect("Failed to create temporary archive");
+    create_many_files_wheel_in(1, &env::temp_dir())
+}
+
+/// The many-files wheel, written to `dir`, with its files split in order over `dir_count`
+/// directories (`manyfiles/` when there is one).
+fn create_many_files_wheel_in(dir_count: usize, dir: &Path) -> tempfile::NamedTempFile {
+    let archive = tempfile::NamedTempFile::new_in(dir).expect("Failed to create temporary archive");
     let mut writer = ZipFileWriter::new(Vec::new());
     let mut record = String::new();
     for index in 0..MANY_FILES_WHEEL_FILE_COUNT {
-        let path = format!("manyfiles/{index}.txt");
+        let path = if dir_count == 1 {
+            format!("manyfiles/{index}.txt")
+        } else {
+            let part = index * dir_count / MANY_FILES_WHEEL_FILE_COUNT;
+            format!("manyfiles{part}/{index}.txt")
+        };
         write_zip_entry(&mut writer, &path, b"");
         writeln!(record, "{path},,0").expect("Writing to a string cannot fail");
     }
@@ -285,6 +296,61 @@ fn unzip_wheel_many_files(c: &mut Criterion<WallTime>) {
                 (
                     fs_err::File::open(archive.path()).expect("Failed to open temporary archive"),
                     tempfile::tempdir().expect("Failed to create wheel extraction directory"),
+                )
+            },
+            |(archive, extracted_wheel)| {
+                let files = uv_extract::unzip(archive, extracted_wheel.path())
+                    .expect("Failed to extract wheel");
+                black_box((files, extracted_wheel))
+            },
+            BatchSize::SmallInput,
+        );
+    });
+}
+
+/// `unzip_wheel_many_files` with the files split in two halves over two directories: the same
+/// rayon pool spreads its threads over the two directories instead of one.
+fn unzip_wheel_many_files_two_dirs(c: &mut Criterion<WallTime>) {
+    if is_codspeed_simulation() {
+        return;
+    }
+
+    let archive = create_many_files_wheel_in(2, &env::temp_dir());
+
+    c.bench_function("unzip_wheel_many_files_two_dirs", |b| {
+        b.iter_batched(
+            || {
+                (
+                    fs_err::File::open(archive.path()).expect("Failed to open temporary archive"),
+                    tempfile::tempdir().expect("Failed to create wheel extraction directory"),
+                )
+            },
+            |(archive, extracted_wheel)| {
+                let files = uv_extract::unzip(archive, extracted_wheel.path())
+                    .expect("Failed to extract wheel");
+                black_box((files, extracted_wheel))
+            },
+            BatchSize::SmallInput,
+        );
+    });
+}
+
+/// `unzip_wheel_many_files` with the archive and the extraction directories in the working
+/// directory, on a disk-backed filesystem, instead of in the tmpfs `/tmp` of the CI jobs.
+fn unzip_wheel_many_files_disk(c: &mut Criterion<WallTime>) {
+    if is_codspeed_simulation() {
+        return;
+    }
+
+    let dir = env::current_dir().expect("Failed to get the working directory");
+    let archive = create_many_files_wheel_in(1, &dir);
+
+    c.bench_function("unzip_wheel_many_files_disk", |b| {
+        b.iter_batched(
+            || {
+                (
+                    fs_err::File::open(archive.path()).expect("Failed to open temporary archive"),
+                    tempfile::tempdir_in(&dir).expect("Failed to create wheel extraction directory"),
                 )
             },
             |(archive, extracted_wheel)| {
@@ -469,11 +535,10 @@ criterion_group! {
         hash_reader,
         unpack_sdist_many_files,
         unzip_wheel_many_files,
+        unzip_wheel_many_files_two_dirs,
+        unzip_wheel_many_files_disk,
         prepare_wheel_many_files,
-        install_wheel_many_files,
-        resolve_warm_jupyter,
-        resolve_warm_jupyter_universal,
-        resolve_warm_airflow
+        install_wheel_many_files
 }
 criterion_main!(uv);
 
