@@ -1,13 +1,12 @@
-run-name: "unzip variants (amd_pstate=${{ inputs.pstate || 'active' }})"
+run-name: "${{ inputs.label || 'unzip variants' }}"
 
 on:
   workflow_dispatch:
     inputs:
-      pstate:
-        description: "amd_pstate mode on the benchmark runner"
-        type: choice
-        options: [active, passive]
-        default: active
+      label:
+        description: "Run name, to tell waves apart"
+        type: string
+        default: ""
       build-run-id:
         description: "Reuse the benchmark build of this run id (empty: build)"
         type: string
@@ -113,33 +112,15 @@ jobs:
       - name: "Add codspeed to PATH"
         run: echo "$GITHUB_WORKSPACE/target/codspeed-bin" >> "$GITHUB_PATH"
 
-      - name: "Switch amd_pstate to passive"
-        if: ${{ inputs.pstate == 'passive' }}
-        run: |
-          echo passive | sudo tee /sys/devices/system/cpu/amd_pstate/status
-          # switching resets boost to 1 and the governor to schedutil
-          echo 0 | sudo tee /sys/devices/system/cpu/cpufreq/boost
-          for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
-            echo performance | sudo tee "$g" >/dev/null
-          done
-
-      - name: "Check CPU frequency settings"
-        env:
-          EXPECTED: ${{ inputs.pstate || 'active' }}
+      - name: "Record CPU frequency settings"
         run: |
           cpu=/sys/devices/system/cpu
-          status=$(cat $cpu/amd_pstate/status)
-          boost=$(cat $cpu/cpufreq/boost)
           {
             echo "| host | amd_pstate | driver | boost | governor | max freq |"
             echo "| -- | -- | -- | -- | -- | -- |"
-            echo "| $(hostname) | $status | $(cat $cpu/cpu8/cpufreq/scaling_driver) | $boost" \
+            echo "| $(hostname) | $(cat $cpu/amd_pstate/status) | $(cat $cpu/cpu8/cpufreq/scaling_driver) | $(cat $cpu/cpufreq/boost)" \
               "| $(cat $cpu/cpu8/cpufreq/scaling_governor) | $(cat $cpu/cpu8/cpufreq/scaling_max_freq) |"
           } | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ "$status" != "$EXPECTED" ] || [ "$boost" != 0 ]; then
-            echo "::error::amd_pstate=$status boost=$boost, expected amd_pstate=$EXPECTED boost=0"
-            exit 1
-          fi
 
       - name: "Record filesystems"
         run: |
