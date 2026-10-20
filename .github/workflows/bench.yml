@@ -1,4 +1,4 @@
-run-name: "walltime (amd_pstate=${{ inputs.pstate || 'active' }})"
+run-name: "unzip variants (amd_pstate=${{ inputs.pstate || 'active' }})"
 
 on:
   workflow_dispatch:
@@ -33,7 +33,7 @@ jobs:
   benchmarks-walltime-build:
     name: "walltime build"
     if: ${{ inputs.build-run-id == '' }}
-    runs-on: ubuntu-24.04
+    runs-on: codspeed-macro-x64-ryzen-9950x-ubuntu-24-04
     timeout-minutes: 60
     steps:
       - name: "Checkout Branch"
@@ -43,7 +43,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ inputs.save-rust-cache == 'true' }}
+          save-if: "true"
 
       - name: "Install Rust toolchain"
         run: rustup show
@@ -55,27 +55,18 @@ jobs:
           version: "0.13.0"
           checksum: "1468ebd5a5541121837c5a2817b9972ba6090fa6caa3d142620850a47fb75154"
 
-      - name: "Install requirements and prime cache"
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsasl2-dev libldap2-dev libkrb5-dev
-          cargo run --locked --bin uv -- venv --cache-dir .cache
-          # Resolve benchmark fixtures without the repository's tooling build policy.
-          cargo run --locked --bin uv -- --config-file test/uv.toml pip compile test/requirements/jupyter.in --universal --exclude-newer 2024-08-08 --cache-dir .cache
-          cargo run --locked --bin uv -- --config-file test/uv.toml pip compile test/requirements/airflow.in --universal --exclude-newer 2024-08-08 --cache-dir .cache
-
       - name: "Build benchmarks"
         run: |
           # cargo-codspeed resolves metadata before passing --locked to Cargo.
           cargo metadata --locked --format-version 1 > /dev/null
-          uv run --only-dev cargo codspeed build --locked -m walltime --profile profiling -p uv-bench --bench uv --bench workspace_discovery --bench git_fetch --bench uv_pep508
+          uv run --only-dev cargo codspeed build --locked -m walltime --profile profiling -p uv-bench --bench uv
 
       - name: "Create artifact archive"
         shell: bash
         run: |
           mkdir -p target/codspeed-bin
           cp "$(uv run --only-dev which cargo-codspeed)" target/codspeed-bin/
-          tar -cf - target/codspeed target/codspeed-bin target/debug/uv .cache | zstd -T0 -3 -o benchmarks-walltime.tar.zst
+          tar -cf - target/codspeed target/codspeed-bin | zstd -T0 -3 -o benchmarks-walltime.tar.zst
 
       - name: "Upload benchmark artifacts"
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -122,9 +113,6 @@ jobs:
       - name: "Add codspeed to PATH"
         run: echo "$GITHUB_WORKSPACE/target/codspeed-bin" >> "$GITHUB_PATH"
 
-      - name: "Create venv"
-        run: ./target/debug/uv venv --cache-dir .cache
-
       - name: "Switch amd_pstate to passive"
         if: ${{ inputs.pstate == 'passive' }}
         run: |
@@ -153,6 +141,15 @@ jobs:
             exit 1
           fi
 
+      - name: "Record filesystems"
+        run: |
+          {
+            echo "| path | filesystem |"
+            echo "| -- | -- |"
+            echo "| /tmp | $(findmnt -no FSTYPE -T /tmp) |"
+            echo "| crates/uv-bench | $(findmnt -no FSTYPE -T crates/uv-bench) |"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: "Retain benchmark profiles"
         id: profiles
         # Only public main pushes produce reusable baseline profiles.
@@ -162,7 +159,7 @@ jobs:
       - name: "Run benchmarks"
         uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
         with:
-          run: uv run --only-dev cargo codspeed run
+          run: uv run --only-dev cargo codspeed run --bench uv unzip_wheel_many_files
           mode: walltime
           upload-url: ${{ steps.profiles.outputs.upload-url }}
 
