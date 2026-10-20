@@ -11,6 +11,10 @@ on:
         description: "Reuse the benchmark build of this run id (empty: build)"
         type: string
         default: ""
+      bench-env:
+        description: "One KEY=VALUE set for the benchmark steps (empty: none)"
+        type: string
+        default: ""
   workflow_call:
     inputs:
       save-rust-cache:
@@ -131,6 +135,14 @@ jobs:
             echo "| /tmp | $(findmnt -no FSTYPE -T /tmp) |"
             echo "| crates/uv-bench | $(findmnt -no FSTYPE -T crates/uv-bench) |"
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: "Set benchmark environment"
+        if: ${{ inputs.bench-env != '' }}
+        env:
+          BENCH_ENV: ${{ inputs.bench-env }}
+        run: |
+          echo "$BENCH_ENV" >> "$GITHUB_ENV"
+          echo "bench-env: $BENCH_ENV" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: "Retain benchmark profiles"
         id: profiles
