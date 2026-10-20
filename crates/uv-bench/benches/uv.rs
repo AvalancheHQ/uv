@@ -357,8 +357,10 @@ fn tmpfs_create_files(c: &mut Criterion<WallTime>) {
     });
 }
 
-/// `tmpfs_create_files` on rayon's global pool, the pool `uv_extract::unzip` runs on.
+/// `tmpfs_create_files` on rayon's global pool, set up the way `uv_extract::unzip` sets it up.
 fn tmpfs_create_files_parallel(c: &mut Criterion<WallTime>) {
+    // A default pool built by rayon would make uv's own setup panic in later benchmarks.
+    uv_threads::initialize_rayon_once();
     create_files(c, "tmpfs_create_files_parallel", |dir| {
         (0..MANY_FILES_WHEEL_FILE_COUNT)
             .into_par_iter()

@@ -92,6 +92,7 @@ uv-redacted = { workspace = true }
 uv-resolver = { workspace = true }
 uv-resolver-types = { workspace = true }
 uv-static = { workspace = true }
+uv-threads = { workspace = true }
 uv-types = { workspace = true }
 uv-workspace = { workspace = true }
 

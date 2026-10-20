@@ -5913,6 +5913,7 @@ dependencies = [
  "uv-resolver",
  "uv-resolver-types",
  "uv-static",
+ "uv-threads",
  "uv-types",
  "uv-workspace",
 ]
