@@ -284,73 +284,51 @@ fn unpack_sdist_many_files(c: &mut Criterion<WallTime>) {
 }
 
 fn unzip_wheel_many_files(c: &mut Criterion<WallTime>) {
-    if is_codspeed_simulation() {
-        return;
-    }
-
-    let archive = create_many_files_wheel();
-
-    c.bench_function("unzip_wheel_many_files", |b| {
-        b.iter_batched(
-            || {
-                (
-                    fs_err::File::open(archive.path()).expect("Failed to open temporary archive"),
-                    tempfile::tempdir().expect("Failed to create wheel extraction directory"),
-                )
-            },
-            |(archive, extracted_wheel)| {
-                let files = uv_extract::unzip(archive, extracted_wheel.path())
-                    .expect("Failed to extract wheel");
-                black_box((files, extracted_wheel))
-            },
-            BatchSize::SmallInput,
-        );
-    });
+    unzip_many_files(c, "unzip_wheel_many_files", 1, &env::temp_dir());
 }
 
 /// `unzip_wheel_many_files` with the files split in two halves over two directories: the same
 /// rayon pool spreads its threads over the two directories instead of one.
 fn unzip_wheel_many_files_two_dirs(c: &mut Criterion<WallTime>) {
-    if is_codspeed_simulation() {
-        return;
-    }
-
-    let archive = create_many_files_wheel_in(2, &env::temp_dir());
-
-    c.bench_function("unzip_wheel_many_files_two_dirs", |b| {
-        b.iter_batched(
-            || {
-                (
-                    fs_err::File::open(archive.path()).expect("Failed to open temporary archive"),
-                    tempfile::tempdir().expect("Failed to create wheel extraction directory"),
-                )
-            },
-            |(archive, extracted_wheel)| {
-                let files = uv_extract::unzip(archive, extracted_wheel.path())
-                    .expect("Failed to extract wheel");
-                black_box((files, extracted_wheel))
-            },
-            BatchSize::SmallInput,
-        );
-    });
+    unzip_many_files(c, "unzip_wheel_many_files_two_dirs", 2, &env::temp_dir());
 }
 
 /// `unzip_wheel_many_files` with the archive and the extraction directories in the working
 /// directory, on a disk-backed filesystem, instead of in the tmpfs `/tmp` of the CI jobs.
 fn unzip_wheel_many_files_disk(c: &mut Criterion<WallTime>) {
+    let dir = env::current_dir().expect("Failed to get the working directory");
+    unzip_many_files(c, "unzip_wheel_many_files_disk", 1, &dir);
+}
+
+// The same three benchmarks under other names, for a second job step to run them again.
+fn unzip_again_wheel_many_files(c: &mut Criterion<WallTime>) {
+    unzip_many_files(c, "unzip_again_wheel_many_files", 1, &env::temp_dir());
+}
+
+fn unzip_again_wheel_many_files_two_dirs(c: &mut Criterion<WallTime>) {
+    unzip_many_files(c, "unzip_again_wheel_many_files_two_dirs", 2, &env::temp_dir());
+}
+
+fn unzip_again_wheel_many_files_disk(c: &mut Criterion<WallTime>) {
+    let dir = env::current_dir().expect("Failed to get the working directory");
+    unzip_many_files(c, "unzip_again_wheel_many_files_disk", 1, &dir);
+}
+
+/// Extract the many-files wheel, split over `dir_count` directories, into a new temporary
+/// directory under `dir` on every iteration.
+fn unzip_many_files(c: &mut Criterion<WallTime>, name: &str, dir_count: usize, dir: &Path) {
     if is_codspeed_simulation() {
         return;
     }
 
-    let dir = env::current_dir().expect("Failed to get the working directory");
-    let archive = create_many_files_wheel_in(1, &dir);
+    let archive = create_many_files_wheel_in(dir_count, dir);
 
-    c.bench_function("unzip_wheel_many_files_disk", |b| {
+    c.bench_function(name, |b| {
         b.iter_batched(
             || {
                 (
                     fs_err::File::open(archive.path()).expect("Failed to open temporary archive"),
-                    tempfile::tempdir_in(&dir).expect("Failed to create wheel extraction directory"),
+                    tempfile::tempdir_in(dir).expect("Failed to create wheel extraction directory"),
                 )
             },
             |(archive, extracted_wheel)| {
@@ -537,6 +515,9 @@ criterion_group! {
         unzip_wheel_many_files,
         unzip_wheel_many_files_two_dirs,
         unzip_wheel_many_files_disk,
+        unzip_again_wheel_many_files,
+        unzip_again_wheel_many_files_two_dirs,
+        unzip_again_wheel_many_files_disk,
         prepare_wheel_many_files,
         install_wheel_many_files
 }
