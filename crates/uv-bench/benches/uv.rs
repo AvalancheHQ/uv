@@ -22,6 +22,7 @@ use futures::TryStreamExt;
 use futures::executor::block_on;
 use futures::io::AllowStdIo;
 use futures::stream;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use sha2::{Digest, Sha256};
 use tar_codec::{ArchiveBuilder as _, EntryMetadata, TarEncoder};
 use tokio::io::AsyncRead;
@@ -346,6 +347,46 @@ fn unzip_many_files(c: &mut Criterion<WallTime>, name: &str, dir_count: usize, d
     });
 }
 
+/// Create as many empty files as the many-files wheel holds, in a new temporary directory
+/// under the tmpfs `/tmp` on every iteration, and nothing else.
+fn tmpfs_create_files(c: &mut Criterion<WallTime>) {
+    create_files(c, "tmpfs_create_files", |dir| {
+        for index in 0..MANY_FILES_WHEEL_FILE_COUNT {
+            create_empty_file(dir, index);
+        }
+    });
+}
+
+/// `tmpfs_create_files` on rayon's global pool, the pool `uv_extract::unzip` runs on.
+fn tmpfs_create_files_parallel(c: &mut Criterion<WallTime>) {
+    create_files(c, "tmpfs_create_files_parallel", |dir| {
+        (0..MANY_FILES_WHEEL_FILE_COUNT)
+            .into_par_iter()
+            .for_each(|index| create_empty_file(dir, index));
+    });
+}
+
+fn create_files(c: &mut Criterion<WallTime>, name: &str, create: impl Fn(&Path)) {
+    if is_codspeed_simulation() {
+        return;
+    }
+
+    c.bench_function(name, |b| {
+        b.iter_batched(
+            || tempfile::tempdir_in(env::temp_dir()).expect("Failed to create directory"),
+            |dir| {
+                create(dir.path());
+                dir
+            },
+            BatchSize::SmallInput,
+        );
+    });
+}
+
+fn create_empty_file(dir: &Path, index: usize) {
+    fs_err::File::create(dir.join(format!("{index}.txt"))).expect("Failed to create file");
+}
+
 fn prepare_wheel_many_files(c: &mut Criterion<WallTime>) {
     if is_codspeed_simulation() {
         return;
@@ -518,8 +559,8 @@ criterion_group! {
         hash_reader,
         unpack_sdist_many_files,
         unzip_wheel_many_files,
-        unzip_wheel_many_files_twice,
-        unzip_again_wheel_many_files,
+        tmpfs_create_files,
+        tmpfs_create_files_parallel,
         prepare_wheel_many_files,
         install_wheel_many_files
 }

@@ -157,11 +157,19 @@ jobs:
           mode: walltime
           upload-url: ${{ steps.profiles.outputs.upload-url }}
 
-      # The same benchmark code under other names, in a second process on the same boot.
-      - name: "Run benchmarks again"
+      # Only empty files created on tmpfs, in a second process on the same boot.
+      - name: "Run tmpfs benchmarks"
         uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
         with:
-          run: uv run --only-dev cargo codspeed run --bench uv unzip_again_wheel_many_files
+          run: uv run --only-dev cargo codspeed run --bench uv tmpfs_
+          mode: walltime
+          upload-url: ${{ steps.profiles.outputs.upload-url }}
+
+      # CPU-only control, in a third process.
+      - name: "Run CPU benchmark"
+        uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
+        with:
+          run: uv run --only-dev cargo codspeed run --bench uv hash_sha256
           mode: walltime
           upload-url: ${{ steps.profiles.outputs.upload-url }}
 
