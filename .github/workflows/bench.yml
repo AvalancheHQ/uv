@@ -125,7 +125,6 @@ jobs:
             echo "| $(hostname) | $(cat $cpu/amd_pstate/status) | $(cat $cpu/cpu8/cpufreq/scaling_driver) | $(cat $cpu/cpufreq/boost)" \
               "| $(cat $cpu/cpu8/cpufreq/scaling_governor) | $(cat $cpu/cpu8/cpufreq/scaling_max_freq) |"
           } | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "cmdline: $(cat /proc/cmdline)" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: "Record filesystems"
         run: |
