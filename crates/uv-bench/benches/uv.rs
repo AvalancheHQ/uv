@@ -350,11 +350,18 @@ fn unzip_many_files(c: &mut Criterion<WallTime>, name: &str, dir_count: usize, d
 /// Create as many empty files as the many-files wheel holds, in a new temporary directory
 /// under the tmpfs `/tmp` on every iteration, and nothing else.
 fn tmpfs_create_files(c: &mut Criterion<WallTime>) {
-    create_files(c, "tmpfs_create_files", |dir| {
-        for index in 0..MANY_FILES_WHEEL_FILE_COUNT {
-            create_empty_file(dir, index);
-        }
-    });
+    create_files(c, "tmpfs_create_files", create_files_in_order);
+}
+
+/// `tmpfs_create_files` under another name, for a second process of the same job.
+fn tmpfs_again_create_files(c: &mut Criterion<WallTime>) {
+    create_files(c, "tmpfs_again_create_files", create_files_in_order);
+}
+
+fn create_files_in_order(dir: &Path) {
+    for index in 0..MANY_FILES_WHEEL_FILE_COUNT {
+        create_empty_file(dir, index);
+    }
 }
 
 /// `tmpfs_create_files` on rayon's global pool, set up the way `uv_extract::unzip` sets it up.
@@ -387,6 +394,49 @@ fn create_files(c: &mut Criterion<WallTime>, name: &str, create: impl Fn(&Path))
 
 fn create_empty_file(dir: &Path, index: usize) {
     fs_err::File::create(dir.join(format!("{index}.txt"))).expect("Failed to create file");
+}
+
+/// Dependent loads through 1 GiB, far more than the caches hold: memory latency, no system calls.
+fn dram_chase(c: &mut Criterion<WallTime>) {
+    chase(c, "dram_chase", 1 << 30, 100_000);
+}
+
+/// `dram_chase` in 16 MiB, which fits in the 32 MB L3 of a CCD.
+fn l3_chase(c: &mut Criterion<WallTime>) {
+    chase(c, "l3_chase", 16 << 20, 1_000_000);
+}
+
+/// Time `loads` dependent loads along a random cycle through the cache lines of `bytes`.
+fn chase(c: &mut Criterion<WallTime>, name: &str, bytes: usize, loads: usize) {
+    if is_codspeed_simulation() {
+        return;
+    }
+
+    // Built on the first call only: criterion calls the closure for every sample.
+    let mut chain = None;
+    c.bench_function(name, |b| {
+        let (next, at) = chain.get_or_insert_with(|| random_cycle(bytes));
+        b.iter(|| {
+            for _ in 0..loads {
+                *at = next[*at];
+            }
+            black_box(*at)
+        });
+    });
+}
+
+/// One slot per cache line of `bytes`, holding the slot of the next line along a random cycle
+/// through all lines, and the slot to start from.
+fn random_cycle(bytes: usize) -> (Vec<usize>, usize) {
+    const SLOTS_PER_LINE: usize = 64 / size_of::<usize>();
+    let lines = bytes / 64;
+    let mut order: Vec<usize> = (0..lines).collect();
+    Rng::with_seed(0).shuffle(&mut order);
+    let mut next = vec![0; bytes / size_of::<usize>()];
+    for (index, &line) in order.iter().enumerate() {
+        next[line * SLOTS_PER_LINE] = order[(index + 1) % lines] * SLOTS_PER_LINE;
+    }
+    (next, order[0] * SLOTS_PER_LINE)
 }
 
 fn prepare_wheel_many_files(c: &mut Criterion<WallTime>) {
@@ -562,7 +612,9 @@ criterion_group! {
         unpack_sdist_many_files,
         unzip_wheel_many_files,
         tmpfs_create_files,
-        tmpfs_create_files_parallel,
+        tmpfs_again_create_files,
+        dram_chase,
+        l3_chase,
         prepare_wheel_many_files,
         install_wheel_many_files
 }

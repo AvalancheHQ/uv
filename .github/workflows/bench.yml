@@ -161,11 +161,27 @@ jobs:
       - name: "Run tmpfs benchmarks"
         uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
         with:
-          run: uv run --only-dev cargo codspeed run --bench uv tmpfs_
+          run: uv run --only-dev cargo codspeed run --bench uv tmpfs_create_files
           mode: walltime
           upload-url: ${{ steps.profiles.outputs.upload-url }}
 
-      # CPU-only control, in a third process.
+      # The same file creation in a third process.
+      - name: "Run tmpfs benchmarks again"
+        uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
+        with:
+          run: uv run --only-dev cargo codspeed run --bench uv tmpfs_again
+          mode: walltime
+          upload-url: ${{ steps.profiles.outputs.upload-url }}
+
+      # Memory latency only, in DRAM and in L3.
+      - name: "Run memory benchmarks"
+        uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
+        with:
+          run: uv run --only-dev cargo codspeed run --bench uv _chase
+          mode: walltime
+          upload-url: ${{ steps.profiles.outputs.upload-url }}
+
+      # CPU-only control, in the last process.
       - name: "Run CPU benchmark"
         uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
         with:
